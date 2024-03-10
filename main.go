@@ -12,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -33,23 +34,54 @@ func (b *bot) eventHandler(evt interface{}) {
 			idStr := os.Getenv("GROUP_ID")
 			id, _ := strconv.ParseInt(idStr, 10, 64)
 			println("id", id, idStr)
+			if v.Message.GetExtendedTextMessage() != nil {
+				messageType = "url"
+			}
 			switch messageType {
 			case "media":
-				fmt.Println("Received a media message from the sensei!", v.Info.Sender.User, v.Info.Type, v.Message.GetImageMessage())
-				imageData, err := b.wa.Download(v.Message.GetImageMessage())
+				fmt.Println("Received a media message from the sensei!", v.Info.Sender.User, v.Info.Type)
+				message, mType := ToDownLoadableMessage(v.Message)
+				data, err := b.wa.Download(message)
 				if err != nil {
-					println("Error downloading image:", err)
+					println("Error downloading file:", err)
 				}
-				println("Downloaded image:", imageData)
-				photo := tgbotapi.NewPhoto(id, tgbotapi.FileBytes{
-					Name:  "asd",
-					Bytes: imageData,
-				})
-				photo.Caption = v.Message.GetImageMessage().GetCaption()
-				b.tg.Send(photo)
+				println("Downloaded file:", data)
+				switch mType {
+				case "image":
+					photo := tgbotapi.NewPhoto(id, tgbotapi.FileBytes{
+						Name:  v.Message.GetImageMessage().GetCaption(),
+						Bytes: data,
+					})
+					photo.Caption = v.Message.GetImageMessage().GetCaption()
+					b.tg.Send(photo)
+				case "document":
+					document := tgbotapi.NewDocument(id, tgbotapi.FileBytes{
+						Name:  v.Message.GetDocumentMessage().GetFileName(),
+						Bytes: data,
+					})
+					document.Caption = v.Message.GetDocumentMessage().GetCaption()
+					b.tg.Send(document)
+				case "video":
+					video := tgbotapi.NewVideo(id, tgbotapi.FileBytes{
+						Name:  v.Message.GetVideoMessage().GetCaption(),
+						Bytes: data,
+					})
+					video.Caption = v.Message.GetVideoMessage().GetCaption()
+					b.tg.Send(video)
+				default:
+					document := tgbotapi.NewDocument(id, tgbotapi.FileBytes{
+						Name:  "somewhat",
+						Bytes: data,
+					})
+					document.Caption = "somewhat"
+					b.tg.Send(document)
+				}
+
 			case "text":
 				fmt.Println("Received a text message from the sensei!", v.Info.Sender.User, v.Info.Type, v.Message.GetConversation())
 				b.tg.Send(tgbotapi.NewMessage(id, v.Message.GetConversation()))
+			case "url":
+				b.tg.Send(tgbotapi.NewMessage(id, v.Message.GetExtendedTextMessage().GetText()))
 			}
 		}
 		fmt.Println("Received a message!", v.Message.GetConversation(), v.Info.Sender.User, v.Info.Type, sensei)
@@ -112,4 +144,20 @@ func main() {
 	<-c
 
 	client.Disconnect()
+}
+
+func ToDownLoadableMessage(message *proto.Message) (whatsmeow.DownloadableMessage, string) {
+	if message.GetImageMessage() != nil {
+		return message.GetImageMessage(), "image"
+	}
+	if message.GetDocumentMessage() != nil {
+		return message.GetDocumentMessage(), "document"
+	}
+	if message.GetVideoMessage() != nil {
+		return message.GetVideoMessage(), "video"
+	}
+	if message.GetAudioMessage() != nil {
+		return message.GetAudioMessage(), "audio"
+	}
+	return nil, "nil"
 }
